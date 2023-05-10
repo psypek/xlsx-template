@@ -396,7 +396,7 @@ class Workbook {
                         // Append all formula cells referring to "table" cells
                         formulaCells
                             // But only those that are not already there (possibly inserted by cellsOverTable code above)
-                            .filter(cell => row.findall("c").some(includedCell => self.splitRef(includedCell.attrib.r).col !== self.splitRef(cell.attrib.r).col))
+                            .filter(cell => !row.findall("c").some(includedCell => self.splitRef(includedCell.attrib.r).col === self.splitRef(cell.attrib.r).col))
                             .forEach(formulaCell => {
                                 var newCell = self.cloneElement(formulaCell, true);
                                 newCell.attrib.r = self.joinRef({
