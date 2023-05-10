@@ -750,6 +750,47 @@ describe("CRUD operations", function() {
             });
         });
 
+        it("Correctly recalculate standalone (outside of a named table) formula", function(done) {
+            fs.readFile(path.join(__dirname, "templates", "test-formula-no-table.xlsx"), function(err, data) {
+                expect(err).toBeNull();
+
+                var t = new XlsxTemplate(data);
+                t.substitute(1, {
+                    data: [
+                        { name: "A", quantity: 10, unitCost: 3 },
+                        { name: "B", quantity: 15, unitCost: 5 },
+                    ]
+                });
+
+                var newData = t.generate();
+                var sheet1        = etree.parse(t.archive.file("xl/worksheets/sheet1.xml").asText()).getroot();
+                expect(sheet1).toBeDefined();
+
+                expect(sheet1.find("./sheetData/row/c[@r='D6']/f").text).toEqual("C6*B6");
+                expect(sheet1.find("./sheetData/row/c[@r='D6']/v")).toBeNull();
+
+                // Formula extended to the next row
+                expect(sheet1.find("./sheetData/row/c[@r='D7']/f")).toBeTruthy();
+                expect(sheet1.find("./sheetData/row/c[@r='D7']/f").text).toEqual("C7*B7");
+                expect(sheet1.find("./sheetData/row/c[@r='D7']/v")).toBeNull();
+
+                // SUM(D6:D6) changed to SUM(D6:D7)
+                expect(sheet1.find("./sheetData/row/c[@r='D8']/f").text).toEqual("SUM(D6:D7)");
+                expect(sheet1.find("./sheetData/row/c[@r='D8']/v")).toBeNull();
+
+                // Formula left intact
+                expect(sheet1.find("./sheetData/row/c[@r='F1']/f").text).toEqual("SUM(F2:F3)");
+                expect(sheet1.find("./sheetData/row/c[@r='F1']/v")).toBeNull();
+
+                // Formula moved further down
+                expect(sheet1.find("./sheetData/row/c[@r='F12']/f").text).toEqual("SUM(F10:F11)");
+                expect(sheet1.find("./sheetData/row/c[@r='F12']/v")).toBeNull();
+
+                fs.writeFileSync('test/output/test-formula-no-table.xlsx', newData, 'binary');
+                done();
+            });
+        });
+
         it("File without dimensions works", function(done) {
             fs.readFile(path.join(__dirname, "templates", "gdocs.xlsx"), function(err, data) {
                 expect(err).toBeNull();

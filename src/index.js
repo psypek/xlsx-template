@@ -368,7 +368,17 @@ class Workbook {
                 // Filter all the cellsForsubstituteTable cell with the 'row' cell
                 var cellsOverTable = row.findall("c").filter(cell => !cellsForsubstituteTable.includes(cell));
 
+                // Find all formula cells that refer to substituted table cells
+                // First, find all substituted columns
+                var substitutedColumns = cellsForsubstituteTable.map(cell => self.splitRef(cell.attrib.r).col);
+                // Then, find all formula cells with formulae referring to any of the above
+                var formulaCells = cellsOverTable.filter(cell => {
+                    var formulaTag = cell.find('f');
+                    return formulaTag && (formulaTag.text.match(/(?:(.+)!)?(\$)?([A-Z]+)(\$)?([0-9]+)/g) || []).some(matchedRef => substitutedColumns.includes(self.splitRef(matchedRef).col));
+                });
+
                 newTableRows.forEach(function (row) {
+                    var resortRows = false;
                     if (self.option && self.option.subsituteAllTableRow) {
                         // I happend the other cell in substitute new table rows
                         cellsOverTable.forEach(function (cellOverTable) {
@@ -379,6 +389,35 @@ class Workbook {
                             });
                             row.append(newCell);
                         });
+                        resortRows = true;
+                    }
+
+                    if (formulaCells.length > 0) {
+                        // Append all formula cells referring to "table" cells
+                        formulaCells
+                            // But only those that are not already there (possibly inserted by cellsOverTable code above)
+                            .filter(cell => row.findall("c").some(includedCell => self.splitRef(includedCell.attrib.r).col !== self.splitRef(cell.attrib.r).col))
+                            .forEach(formulaCell => {
+                                var newCell = self.cloneElement(formulaCell, true);
+                                newCell.attrib.r = self.joinRef({
+                                    row: row.attrib.r,
+                                    col: self.splitRef(newCell.attrib.r).col
+                                });
+                                var formulaNode = newCell.find('f');
+                                formulaNode.text = formulaNode.text.replace(/(?:(.+)!)?(\$)?([A-Z]+)(\$)?([0-9]+)/g,
+                                    function (referenceName) {
+                                        var ref = self.splitRef(referenceName);
+                                        if (!ref.rowAbsolute) {
+                                            ref.row += row.attrib.r - self.splitRef(formulaCell.attrib.r).row;
+                                        }
+                                        return self.joinRef(ref);
+                                    });
+                                row.append(newCell);
+                            });
+                        resortRows = true;
+                    }
+
+                    if (resortRows) {
                         // I sort the cell in the new row
                         var newSortRow = row.findall("c").sort(function (a, b) {
                             var colA = self.splitRef(a.attrib.r).col;
@@ -1261,6 +1300,25 @@ class Workbook {
             }
         });
 
+        // Update formulae
+        sheet.findall('.sheetData/row/c/f').forEach(function (formulaNode) {
+            var previousReferenceRow = null;
+            formulaNode.text = formulaNode.text.replace(/(:?)((?:(.+)!)?(\$)?([A-Z]+)(\$)?([0-9]+))/g,
+                function (_, colon, referenceName) {
+                    var ref = self.splitRef(referenceName);
+                    var refColumnNumber = self.charToNum(ref.col);
+                    // If I encounter a colon (:) I treat it carefully in edge cases like SUM(B2:B2) -> maybe I need to
+                    // change it to SUM(B2:C2)
+                    if (!ref.colAbsolute && (colon && previousReferenceRow === ref.row ? refColumnNumber + 1 : refColumnNumber) > currentCol) {
+                        ref.col = self.numToChar(refColumnNumber + numCols);
+                    }
+                    if (!colon) {
+                        previousReferenceRow = ref.row;
+                    }
+                    return colon + self.joinRef(ref);
+                });
+        });
+
         // Named cells/ranges
         workbook.findall("definedNames/definedName").forEach(function (name) {
             var ref = name.text;
@@ -1326,6 +1384,24 @@ class Workbook {
                     mergeCells._children.push(newMergeCell);
                 }
             }
+        });
+
+        // Update formulae
+        sheet.findall('.sheetData/row/c/f').forEach(function (formulaNode) {
+            var previousReferenceColumn = null;
+            formulaNode.text = formulaNode.text.replace(/(:?)((?:(.+)!)?(\$)?([A-Z]+)(\$)?([0-9]+))/g,
+                function (_, colon, referenceName) {
+                var ref = self.splitRef(referenceName);
+                // If I encounter a colon (:) I treat it carefully in edge cases like SUM(D2:D2) -> maybe I need to
+                // change it to SUM(D2:D4)
+                if (!ref.rowAbsolute && (colon && previousReferenceColumn === ref.col ? ref.row + 1 : ref.row) > currentRow) {
+                    ref.row += numRows;
+                }
+                if (!colon) {
+                    previousReferenceColumn = ref.col;
+                }
+                return colon + self.joinRef(ref);
+            });
         });
 
         // Update named tables below this row
